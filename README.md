@@ -21,8 +21,9 @@ Predicts UFC fight winners using historical fight data from ufcstats.com.
 ## Usage
 
 1. Install dependencies: `pip install -r requirements.txt`
-2. Open `MODEL.ipynb` in Jupyter and run all cells
+2. Open `UFC Prediction Model v2fix2.ipynb` in Jupyter and run all cells
 3. The notebook loads data from `data/`, regenerates `ufc_master_features.csv`, and trains all models
+4. `MODEL.ipynb` is an earlier version of the same notebook. Will be dropped in future versions
 
 ## Data
 
@@ -33,13 +34,3 @@ Raw fight data is in `data/`:
 - `ufc_fighter_tott.csv` — physical attributes (height, weight, reach, stance, DOB)
 - `ufc_event_details.csv` — event dates and locations
 
-## Project Structure
-
-```
-ufc-prediction-github/
-  MODEL.ipynb           # Main modeling notebook
-  data/                 # Raw CSV datasets
-  requirements.txt      # Python dependencies
-  .gitignore
-  README.md
-```
