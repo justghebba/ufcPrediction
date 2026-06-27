@@ -35,7 +35,8 @@ from models import (
 )
 
 
-def main():
+def main(argv=None):
+    """argv — pass a list to override sys.argv (used from Jupyter notebooks)."""
     set_ufc_theme()
     parser = argparse.ArgumentParser(description="UFC Prediction Pipeline v3")
     parser.add_argument("--skip-features", action="store_true",
@@ -44,7 +45,7 @@ def main():
                         help="Skip time-series cross-validation")
     parser.add_argument("--no-diagnostics", action="store_true",
                         help="Skip rolling-window meta analysis")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Ensure output directories exist
     os.makedirs(os.path.join(OUTPUT_DIR, "plots"), exist_ok=True)
