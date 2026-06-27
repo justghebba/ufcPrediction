@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+UFCPREDv3/outputs/
+.DS_Store
