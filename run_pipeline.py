@@ -30,7 +30,7 @@ from features import (
 from pairwise import add_all_pairwise_features
 from models import (
     prepare_symmetrized_data, temporal_split, run_model_comparison,
-    time_series_cv, plot_evaluation_dashboard,
+    time_series_cv, plot_evaluation_dashboard, plot_model_comparison,
     impute_and_scale, print_comparison_table
 )
 
@@ -142,8 +142,8 @@ def main(argv=None):
 
     # -- 4c: Full-dataset model comparison --
     print("\n  4c: Training models (full dataset)...")
-    results_full, xgb_model, rf_model, lr_model = run_model_comparison(
-        X_train, X_val, y_train, y_val, label_suffix=""
+    results_full, xgb_model, rf_model, lr_model, probs_full = run_model_comparison(
+        X_train, X_val, y_train, y_val, label_suffix="", return_probs=True
     )
     print_comparison_table(results_full)
 
@@ -151,6 +151,13 @@ def main(argv=None):
     unique_val = val_df.drop_duplicates(subset="fight_id", keep="first")
     elo_pred = (unique_val["elo_diff"] > 0).astype(int)
     elo_baseline = accuracy_score(unique_val["target"], elo_pred)
+
+    elo_diff_val = np.nan_to_num(val_df["elo_diff"].values, nan=0.0)
+    elo_range = elo_diff_val.max() - elo_diff_val.min()
+    elo_prob_full = np.where(elo_range > 1e-8,
+                             (elo_diff_val - elo_diff_val.min()) / elo_range,
+                             np.full_like(elo_diff_val, 0.5))
+    elo_full = accuracy_score(val_df["target"], (elo_diff_val > 0).astype(int))
     print(f"  ELO baseline (unique val fights): {elo_baseline:.4f}")
 
     xgb_pred_uniq = xgb_model.predict(unique_val[feature_cols])
@@ -158,7 +165,7 @@ def main(argv=None):
     print(f"  XGBoost lift over ELO: {xgb_lift:+.4f}")
 
     # -- 4e: Evaluation dashboard --
-    y_prob_xgb = xgb_model.predict_proba(X_val)[:, 1]
+    y_prob_xgb = probs_full["XGBoost"]
     y_pred_xgb = (y_prob_xgb >= 0.5).astype(int)
     plot_evaluation_dashboard(
         y_val, y_prob_xgb, y_pred_xgb, feature_cols, xgb_model,
@@ -174,10 +181,44 @@ def main(argv=None):
     y_tr_2005, y_va_2005 = train_2005["target"], val_2005["target"]
     print(f"  2005+ Train: {len(train_2005)}, Val: {len(val_2005)}")
 
-    results_2005, model_2005, _, _ = run_model_comparison(
-        X_tr_2005, X_va_2005, y_tr_2005, y_va_2005, label_suffix=" (2005+)"
+    results_2005, model_2005, _, _, probs_2005 = run_model_comparison(
+        X_tr_2005, X_va_2005, y_tr_2005, y_va_2005,
+        label_suffix=" (2005+)", return_probs=True
     )
     print_comparison_table(results_2005)
+
+    # ELO baseline for 2005+ subset
+    elo_diff_2005 = np.nan_to_num(val_2005["elo_diff"].values, nan=0.0)
+    elo_range_2005 = elo_diff_2005.max() - elo_diff_2005.min()
+    elo_prob_2005 = np.where(elo_range_2005 > 1e-8,
+                             (elo_diff_2005 - elo_diff_2005.min()) / elo_range_2005,
+                             np.full_like(elo_diff_2005, 0.5))
+    elo_2005 = accuracy_score(val_2005["target"], (elo_diff_2005 > 0).astype(int))
+    print(f"  ELO baseline (2005+ val): {elo_2005:.4f}")
+
+    # Combined table
+    print(f"\n{'='*70}")
+    print(f"{'Full Dataset vs 2005+ Comparison':^70}")
+    print(f"{'='*70}")
+    h = f"{'Model':<20} {'Acc(F)':<8} {'AUC(F)':<8} {'Acc(05+)':<8} {'AUC(05+)':<8}"
+    print(h)
+    print(f"{'-'*20} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
+    for label in ["XGBoost", "Random Forest", "Logistic Reg"]:
+        r_full = results_full.get(label, {})
+        r_2005 = results_2005.get(f"{label} (2005+)", {})
+        print(f"{label:<20} {r_full.get('accuracy', 0):<8.4f} "
+              f"{r_full.get('auc_roc', 0):<8.4f} "
+              f"{r_2005.get('accuracy', 0):<8.4f} "
+              f"{r_2005.get('auc_roc', 0):<8.4f}")
+    print(f"{'ELO':<20} {elo_full:<8.4f} {'':<8} {elo_2005:<8.4f}")
+    print(f"{'='*70}\n")
+
+    # Model comparison plot
+    plot_model_comparison(
+        y_val, probs_full, elo_prob_full,
+        y_va_2005, probs_2005, elo_prob_2005,
+        save_path=os.path.join(OUTPUT_DIR, "plots", "model_comparison.png"),
+    )
 
     # -- 4g: Time-series cross-validation --
     if not args.no_cv:

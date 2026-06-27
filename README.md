@@ -16,9 +16,9 @@ The primary model (XGBoost) achieves:
 
 | Metric | Value |
 |---|---|
-| Validation Accuracy | ~64.4% |
-| AUC-ROC | ~0.690 |
-| Lift over ELO baseline | +9.2 pp |
+| Validation Accuracy | ~65.5% |
+| AUC-ROC | ~0.703 |
+| Lift over ELO baseline | +8.2 pp |
 | Best threshold | tuned per validation fold |
 
 ---
@@ -78,7 +78,7 @@ The full feature matrix after symmetrization (see Phase 4) contains **105 featur
 
 #### Symmetrization
 
-Each fight produces **two training rows** (one from red's perspective, one from blue's) with swapped labels (target and 1-target). This doubles the dataset to ~17,094 rows and eliminates any red-corner bias baked into the raw data.
+Each fight produces **two training rows** (one from red's perspective, one from blue's) with swapped labels (target and 1-target). This doubles the dataset to ~17,094 rows and eliminates any red-corner bias baked into the raw data. Per-corner physical features (e.g., `fighter_r_reach_inches`) are excluded from training because after symmetrization they carry no stable signal — only the `_diff` versions are used.
 
 #### Temporal Split
 
@@ -193,8 +193,9 @@ outputs/
   models/
     (model pickles — future)
   plots/
-    xgb_evaluation_dashboard.png
-    rolling_window_meta.png    — only if diagnostics enabled
+    xgb_evaluation_dashboard.png   — confusion matrix, ROC, PR, calibration, grouped importance
+    model_comparison.png           — ROC/PR for all 3 models + ELO baseline (full + 2005+)
+    rolling_window_meta.png        — only if diagnostics enabled
 ```
 
 ### Config
@@ -333,18 +334,71 @@ Phase 4 → models.py         — symmetrization, temporal split, 3 models, CV, 
 Phase 5 → diagnostics.py    — rolling window meta analysis (non-production)
 ```
 
-**Performance** (full validation, same temporal split as v2fix2):
+**Performance** (full validation, same temporal split as v2fix2, v3.1 numbers):
 
 | Model | Accuracy | AUC-ROC |
 |---|---|---|
-| XGBoost | 0.644 | 0.690 |
-| Random Forest | 0.656 | 0.702 |
-| Logistic Regression | 0.637 | 0.673 |
+| XGBoost | **0.655** | **0.703** |
+| Random Forest | 0.654 | 0.699 |
+| Logistic Regression | 0.644 | 0.693 |
+| ELO baseline | 0.545 | — |
 
-Random Forest now slightly edges out XGBoost on this validation period, a reversal from earlier versions where XGBoost led.
+XGBoost and Random Forest are essentially tied on this validation period, with XGBoost having a slight edge in AUC-ROC.
 
 **Known limitations** (carried forward):
 - Global defense averages for opponent-adjusted features computed over full dataset (pre-symmetrization). This is a minor leak — the globals incorporate future fights. A proper fix would compute rolling global averages within the chronological loop.
 - ~64% red-corner win rate in raw data. Symmetrization eliminates this for training, but inference still sees the original corner assignment.
 - No hyperparameter search (grid/Random search).
 - Rolling meta analysis not integrated (diagnostic only).
+
+---
+
+### UFCPREDv3.1 (Normed + Grouped + Comparison Plots)
+
+Feature normalization, grouped importance, and multi-model comparison plots.
+
+**Changes from v3:**
+
+| Area | v3 | v3.1 |
+|---|---|---|
+| Corner physicals | 14 per-corner features (`r_age`, `b_height`, etc.) compete with `_diff` versions | Dropped from training (only `_diff` survives). Raw values preserved in exported CSV. Feature count: **105 → ~85**. |
+| Feature normalization | Only Logistic Regression got StandardScaler | All 3 models receive StandardScaled inputs — feature importances are scale-independent. |
+| Feature importance | Per-feature bars — correlated corner+diff pairs double-count | `_aggregate_importance()` groups conceptually related features (e.g., "Striking Volume" sums 6 individual features). Groups shown in red, singletons in blue. |
+| Post-2005 comparison | Separate printed tables | Combined side-by-side table (`Full vs 2005+`) + `plot_model_comparison()` with 6-panel figure (ROC + PR + Accuracy/AUC bars for both subsets). |
+| Model comparison ROC | Only XGBoost | Overlaid ROC and PR curves for XGBoost, Random Forest, Logistic Regression, and ELO baseline. |
+
+**New features added**:
+- `plot_model_comparison(y_val, probs_dict, elo_prob, y_val_2005, ...)` — 2×3 figure with ROC/PR/bar for full and 2005+ subsets
+- `_aggregate_importance(features, importances)` — sums importances by `FEATURE_GROUPS` from `config.py`
+- `FEATURE_GROUPS` in `config.py` — 24 group definitions mapping ~85 features into ~30 display units
+- Combined comparison table showing Accuracy + AUC-ROC for full and 2005+ subsets side by side
+
+**Performance** (v3.1, with grouped importance displayed):
+
+| Model | Full Acc | Full AUC | 2005+ Acc | 2005+ AUC |
+|---|---|---|---|---|
+| XGBoost | 0.655 | 0.703 | 0.661 | 0.704 |
+| Random Forest | 0.654 | 0.699 | 0.658 | 0.702 |
+| Logistic Regression | 0.644 | 0.693 | 0.644 | 0.696 |
+| ELO baseline | 0.545 | — | 0.545 | — |
+
+**Top grouped features** (from XGBoost, after aggregation):
+1. Composite Striking (r/b scores + diff)
+2. ELO (r/b elo + diffs)
+3. Striking Volume (landed, absorbed, diff)
+4. Opponent Quality (avg opp elo, win rate, finish rate)
+5. reach_diff
+6. Experience (num_fights, champ_exp, debut)
+7. ...
+
+**Why drop corner physicals?** After symmetrization the same fighter appears as both red and blue —
+the model can't learn corner-position associations. The only stable signal is the **diff**:
+`reach_diff = +2"` always means the same thing regardless of corner. The raw values are still
+available in `ufc_master_features.csv` for exploratory analysis.
+
+**Why normalize all models?** Without scaling, features with larger numeric ranges
+(e.g., reach in 60-80 inches) appear more important than bounded features (e.g., win_rate 0-1)
+even when the latter is more predictive. Normalizing makes every feature's importance
+comparable on the same scale. Tree models are theoretically scale-invariant, but
+regularization and early stopping can still be affected — the empirical results show
+a slight improvement (XGBoost 0.644 → 0.655).

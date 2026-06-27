@@ -3,7 +3,7 @@ import pandas as pd
 import warnings
 import matplotlib.pyplot as plt
 import seaborn as sns
-from config import CUTOFF_DATE, CUTOFF_2005, XGB_PARAMS, RF_PARAMS, LR_PARAMS, OUTPUT_DIR
+from config import CUTOFF_DATE, CUTOFF_2005, XGB_PARAMS, RF_PARAMS, LR_PARAMS, OUTPUT_DIR, FEATURE_GROUPS
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -48,11 +48,21 @@ def prepare_symmetrized_data(master_df):
     sym_df = pd.concat([model_df, swapped], ignore_index=True)
     sym_df = sym_df.sort_values("DATE").reset_index(drop=True)
 
+    corner_physicals = {
+        # Dropped per-corner physicals — the _diff versions carry the matchup signal
+        "fighter_r_reach_inches", "fighter_b_reach_inches",
+        "fighter_r_height_inches", "fighter_b_height_inches",
+        "fighter_r_weight_lbs", "fighter_b_weight_lbs",
+        "fighter_r_age", "fighter_b_age",
+        "fighter_r_age_sq", "fighter_b_age_sq",
+        "fighter_r_age_cubed", "fighter_b_age_cubed",
+        "fighter_r_southpaw", "fighter_b_southpaw",
+    }
     exclude_cols = {
         "fight_id", "DATE", "EVENT", "BOUT",
         "fighter_r", "fighter_b", "winner", "target",
         "fighter_r_stance", "fighter_b_stance",
-    }
+    } | corner_physicals
     feature_cols = [c for c in sym_df.columns if c not in exclude_cols]
     print(f"  Original fights (excl. draws/NC): {len(model_df)}")
     print(f"  After symmetrization: {len(sym_df)} rows, target balance={sym_df['target'].mean():.3f}")
@@ -218,18 +228,33 @@ def print_comparison_table(results):
 # 6.  Full model comparison pipeline (train + evaluate all three models)
 # ---------------------------------------------------------------------------
 
-def run_model_comparison(X_train, X_val, y_train, y_val, label_suffix=""):
+def run_model_comparison(X_train, X_val, y_train, y_val, label_suffix="",
+                         return_probs=False):
     """Train XGBoost, RF, and LR on the same split and return their metrics.
 
-    A single entry point for both the full-dataset and post-2005 comparisons.
+    All three models now receive StandardScaled inputs so feature importances
+    are scale-independent. XGBoost preserves NaN via scipy sparse; RF and LR
+    additionally get imputation + missing-indicator columns.
+
+    If return_probs=True, also returns a dict of probability arrays for
+    multi-model comparison plotting.
     """
-    # XGBoost (native NaN handling)
-    xgb_model = train_xgb(X_train, y_train, X_val, y_val)
-    y_prob_xgb = xgb_model.predict_proba(X_val)[:, 1]
+    from sklearn.preprocessing import StandardScaler
+
+    # 1. Scale all features (preserves NaN — XGBoost handles it natively)
+    scaler = StandardScaler()
+    X_tr_scl_all = scaler.fit_transform(X_train)
+    X_va_scl_all = scaler.transform(X_val)
+    X_tr_scl_all = pd.DataFrame(X_tr_scl_all, columns=X_train.columns, index=X_train.index)
+    X_va_scl_all = pd.DataFrame(X_va_scl_all, columns=X_val.columns, index=X_val.index)
+
+    # XGBoost on scaled data (NaNs still present)
+    xgb_model = train_xgb(X_tr_scl_all, y_train, X_va_scl_all, y_val)
+    y_prob_xgb = xgb_model.predict_proba(X_va_scl_all)[:, 1]
     y_pred_xgb = (y_prob_xgb >= 0.5).astype(int)
     xgb_metrics = evaluate_model(y_val, y_pred_xgb, y_prob_xgb)
 
-    # Impute & scale for RF/LR
+    # 2. Impute & scale for RF/LR (uses original unscaled data internally)
     X_tr_imp, X_va_imp, X_tr_scl, X_va_scl, _, _ = impute_and_scale(X_train, X_val)
 
     # Random Forest
@@ -249,6 +274,10 @@ def run_model_comparison(X_train, X_val, y_train, y_val, label_suffix=""):
         f"Random Forest{label_suffix}": rf_metrics,
         f"Logistic Reg{label_suffix}": lr_metrics,
     }
+    if return_probs:
+        return results, xgb_model, rf_model, lr_model, {
+            "XGBoost": y_prob_xgb, "Random Forest": y_prob_rf, "Logistic Reg": y_prob_lr,
+        }
     return results, xgb_model, rf_model, lr_model
 
 
@@ -408,14 +437,17 @@ def plot_evaluation_dashboard(y_val, y_prob, y_pred, feature_cols, model, save_p
     axes[1, 0].legend(loc="lower right")
     axes[1, 0].grid(alpha=0.3)
 
-    # Feature importance
-    imp_df = pd.DataFrame({
-        "feature": feature_cols[:len(model.feature_importances_)],
-        "importance": model.feature_importances_,
-    }).sort_values("importance", ascending=True).tail(15)
-    axes[1, 1].barh(imp_df["feature"], imp_df["importance"], color="steelblue")
-    axes[1, 1].set_xlabel("Importance")
-    axes[1, 1].set_title("Top 15 Feature Importance")
+    # Feature importance (grouped)
+    imp_agg = _aggregate_importance(
+        feature_cols[:len(model.feature_importances_)],
+        model.feature_importances_
+    ).head(15).sort_values("importance")
+    colors_imp = ["#E63946" if r["n"] > 1 else "#457B9D"
+                  for _, r in imp_agg.iterrows()]
+    axes[1, 1].barh(imp_agg["feature"], imp_agg["importance"],
+                    color=colors_imp)
+    axes[1, 1].set_xlabel("Grouped Importance")
+    axes[1, 1].set_title("Top 15 Features (grouped, red=multi-feat)")
     axes[1, 1].grid(alpha=0.3, axis="x")
 
     # SHAP beeswarm
@@ -440,3 +472,120 @@ def plot_evaluation_dashboard(y_val, y_prob, y_pred, feature_cols, model, save_p
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.show()
     print("Evaluation dashboard rendered.")
+
+
+def _aggregate_importance(feature_names, raw_importances):
+    """Group feature importances by FEATURE_GROUPS, sum within each group.
+
+    Returns a DataFrame with 'feature' (group name or individual name)
+    and 'importance' columns, sorted by importance descending.
+    """
+    remaining = set(feature_names)
+    groups = {}
+    for group_name, members in FEATURE_GROUPS.items():
+        matched = [f for f in members if f in remaining]
+        if matched:
+            groups[group_name] = matched
+            remaining -= set(matched)
+
+    imp_map = dict(zip(feature_names, raw_importances))
+    rows = []
+    for group_name, members in groups.items():
+        total = sum(imp_map.get(m, 0) for m in members)
+        rows.append({"feature": group_name, "importance": total, "n": len(members)})
+    for feat in sorted(remaining):
+        rows.append({"feature": feat, "importance": imp_map.get(feat, 0), "n": 1})
+    return pd.DataFrame(rows).sort_values("importance", ascending=False)
+
+
+def plot_model_comparison(y_val_full, probs_full, elo_prob_full,
+                          y_val_2005, probs_2005, elo_prob_2005,
+                          save_path=None):
+    """Two-panel comparison figure: ROC + PR curves for all models on both subsets.
+
+    probs_full and probs_2005 are dicts like {'XGBoost': arr, 'RF': arr, 'LR': arr}.
+    elo_prob is the ELO-derived probability array (normalised elo_diff to [0,1]).
+    """
+    from sklearn.metrics import roc_curve, precision_recall_curve, auc, average_precision_score
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    fig.suptitle("Model Comparison: Full Dataset vs 2005+ Subset",
+                 fontsize=16, fontweight="bold", y=1.02)
+    fig.tight_layout(pad=4.0)
+
+    colors = {"XGBoost": "#E63946", "Random Forest": "#457B9D",
+              "Logistic Reg": "#2A9D8F", "ELO": "#E9C46A"}
+    line_styles = {"XGBoost": "-", "Random Forest": "--",
+                   "Logistic Reg": ":", "ELO": "-."}
+
+    for row, (y_val, probs, elo_arr, subset_label) in enumerate([
+        (y_val_full, probs_full, elo_prob_full, "Full Dataset"),
+        (y_val_2005, probs_2005, elo_prob_2005, "2005+ Subset"),
+    ]):
+        all_probs = dict(probs)
+        if elo_arr is not None:
+            all_probs["ELO"] = elo_arr
+
+        # ROC
+        ax_roc = axes[row, 0]
+        for name, prob in all_probs.items():
+            fpr, tpr, _ = roc_curve(y_val, prob)
+            roc_auc = auc(fpr, tpr)
+            ax_roc.plot(fpr, tpr, color=colors.get(name, "gray"),
+                        linestyle=line_styles.get(name, "-"),
+                        lw=2, label=f"{name} (AUC={roc_auc:.3f})")
+        ax_roc.plot([0, 1], [0, 1], "k--", lw=1, alpha=0.4)
+        ax_roc.set_xlim(0, 1)
+        ax_roc.set_ylim(0, 1.05)
+        ax_roc.set_xlabel("False Positive Rate")
+        ax_roc.set_ylabel("True Positive Rate")
+        ax_roc.set_title(f"ROC — {subset_label}")
+        ax_roc.legend(loc="lower right", fontsize=8)
+        ax_roc.grid(alpha=0.3)
+
+        # PR
+        ax_pr = axes[row, 1]
+        for name, prob in all_probs.items():
+            precision, recall, _ = precision_recall_curve(y_val, prob)
+            ap = average_precision_score(y_val, prob)
+            ax_pr.plot(recall, precision, color=colors.get(name, "gray"),
+                       linestyle=line_styles.get(name, "-"),
+                       lw=2, label=f"{name} (AP={ap:.3f})")
+        ax_pr.axhline(y=y_val.mean(), color="gray", linestyle="--", lw=1, alpha=0.4)
+        ax_pr.set_xlim(0, 1)
+        ax_pr.set_ylim(0, 1.05)
+        ax_pr.set_xlabel("Recall")
+        ax_pr.set_ylabel("Precision")
+        ax_pr.set_title(f"PR — {subset_label}")
+        ax_pr.legend(loc="lower left", fontsize=8)
+        ax_pr.grid(alpha=0.3)
+
+        # Accuracy/AUC bar chart
+        ax_bar = axes[row, 2]
+        labels = [k for k in probs]
+        accs = []
+        aucs = []
+        for name in labels:
+            from sklearn.metrics import accuracy_score, roc_auc_score
+            pred = (probs[name] >= 0.5).astype(int)
+            accs.append(accuracy_score(y_val, pred))
+            aucs.append(roc_auc_score(y_val, probs[name]))
+        x = np.arange(len(labels))
+        w = 0.35
+        bars1 = ax_bar.bar(x - w/2, accs, w, label="Accuracy", color="#457B9D")
+        bars2 = ax_bar.bar(x + w/2, aucs, w, label="AUC-ROC", color="#2A9D8F")
+        ax_bar.set_xticks(x)
+        ax_bar.set_xticklabels(labels, fontsize=8)
+        ax_bar.set_ylim(0.4, 0.8)
+        ax_bar.set_ylabel("Score")
+        ax_bar.set_title(f"Accuracy & AUC — {subset_label}")
+        ax_bar.legend(fontsize=8)
+        ax_bar.grid(alpha=0.3, axis="y")
+        for b in list(bars1) + list(bars2):
+            ax_bar.text(b.get_x() + b.get_width()/2, b.get_height() + 0.005,
+                        f"{b.get_height():.2f}", ha="center", va="bottom", fontsize=7)
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.show()
+    print("Model comparison plot saved.")

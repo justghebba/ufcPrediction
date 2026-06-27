@@ -27,6 +27,74 @@ CLASS_LIMITS = {
     "Women's Featherweight": 145,
 }
 
+FEATURE_GROUPS = {
+    "Striking Volume": [
+        "fighter_r_sig_landed_per_fight", "fighter_b_sig_landed_per_fight",
+        "fighter_r_sig_absorbed_per_fight", "fighter_b_sig_absorbed_per_fight",
+        "fighter_r_sig_diff_per_fight", "fighter_b_sig_diff_per_fight",
+    ],
+    "Striking Accuracy": ["fighter_r_sig_acc", "fighter_b_sig_acc"],
+    "Striking Defense": ["fighter_r_striking_defense", "fighter_b_striking_defense"],
+    "Knockdowns": ["fighter_r_kd_per_fight", "fighter_b_kd_per_fight"],
+    "Takedowns": [
+        "fighter_r_td_landed_per_fight", "fighter_b_td_landed_per_fight",
+        "fighter_r_td_diff_per_fight", "fighter_b_td_diff_per_fight",
+    ],
+    "TD Accuracy": ["fighter_r_td_acc", "fighter_b_td_acc"],
+    "TD Defense": ["fighter_r_td_defense", "fighter_b_td_defense"],
+    "Control": ["fighter_r_ctrl_sec_per_fight", "fighter_b_ctrl_sec_per_fight"],
+    "Submissions": ["fighter_r_sub_att_per_fight", "fighter_b_sub_att_per_fight"],
+    "Composite Striking": [
+        "fighter_r_striking_score", "fighter_b_striking_score",
+        "striking_score_diff",
+    ],
+    "Composite Grappling": [
+        "fighter_r_grappling_score", "fighter_b_grappling_score",
+        "grappling_score_diff",
+    ],
+    "Adjusted Striking": ["adjusted_striking_r", "adjusted_striking_b"],
+    "Adjusted Grappling": ["adjusted_grappling_r", "adjusted_grappling_b"],
+    "ELO": [
+        "fighter_r_elo", "fighter_b_elo", "elo_diff",
+        "fighter_r_elo_finish", "fighter_b_elo_finish", "elo_finish_diff",
+    ],
+    "Experience": [
+        "fighter_r_num_fights", "fighter_b_num_fights", "num_fights_diff",
+        "fighter_r_champ_round_experience", "fighter_b_champ_round_experience",
+        "champ_exp_diff", "fighter_r_is_debut", "fighter_b_is_debut",
+    ],
+    "Win Rates": [
+        "fighter_r_win_rate", "fighter_b_win_rate",
+        "fighter_r_finish_rate", "fighter_b_finish_rate",
+        "fighter_r_ko_rate", "fighter_b_ko_rate",
+        "fighter_r_sub_rate", "fighter_b_sub_rate",
+    ],
+    "Opponent Quality": [
+        "fighter_r_avg_opp_elo", "fighter_b_avg_opp_elo",
+        "fighter_r_avg_opp_win_rate", "fighter_b_avg_opp_win_rate",
+        "fighter_r_avg_opp_finish_rate", "fighter_b_avg_opp_finish_rate",
+        "fighter_r_opponent_elo", "fighter_b_opponent_elo",
+    ],
+    "Streaks": [
+        "fighter_r_win_streak", "fighter_b_win_streak",
+        "fighter_r_loss_streak", "fighter_b_loss_streak",
+        "fighter_r_streak_diff", "fighter_b_streak_diff",
+    ],
+    "Recent Form": [
+        "fighter_r_recent_sig_landed_3", "fighter_b_recent_sig_landed_3",
+        "fighter_r_recent_ctrl_sec_3", "fighter_b_recent_ctrl_sec_3",
+        "fighter_r_recent_finish_rate_3", "fighter_b_recent_finish_rate_3",
+    ],
+    "Recency": [
+        "fighter_r_days_since_last_fight", "fighter_b_days_since_last_fight",
+        "fighter_r_days_since_last_loss", "fighter_b_days_since_last_loss",
+    ],
+    "Weight Cut": [
+        "fighter_r_weight_cut_pct", "fighter_b_weight_cut_pct",
+        "fighter_r_weight_class_changed", "fighter_b_weight_class_changed",
+    ],
+}
+
 ADVANTAGE_FEATURE_COLS = [
     "elo_diff",
     "striking_score_diff",
