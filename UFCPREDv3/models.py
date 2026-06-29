@@ -3,7 +3,7 @@ import pandas as pd
 import warnings
 import matplotlib.pyplot as plt
 import seaborn as sns
-from config import CUTOFF_DATE, CUTOFF_2005, XGB_PARAMS, RF_PARAMS, LR_PARAMS, OUTPUT_DIR, FEATURE_GROUPS
+from config import CUTOFF_DATE, CUTOFF_2005, XGB_PARAMS, RF_PARAMS, LR_PARAMS, OUTPUT_DIR, FEATURE_GROUPS, FEATURE_LABELS
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="sklearn.utils.extmath")
@@ -400,6 +400,13 @@ def _save_and_show(save_path, fig, label):
         fig.show()
 
 
+def _qtext(ax, question):
+    """Add an italic grey question subtitle just below the axes' title."""
+    ax.text(0.5, 1.0, question, transform=ax.transAxes,
+            ha="center", va="top", fontsize=9, fontstyle="italic",
+            color="#999999")
+
+
 def _make_roc_axes(ax, y_val, y_prob, lime):
     """Draw ROC curve + random baseline on a single axes."""
     from sklearn.metrics import roc_curve, auc
@@ -411,7 +418,8 @@ def _make_roc_axes(ax, y_val, y_prob, lime):
     ax.set_ylim([0.0, 1.05])
     ax.set_xlabel("False Positive Rate")
     ax.set_ylabel("True Positive Rate")
-    ax.set_title("ROC Curve")
+    ax.set_title("ROC Curve", fontsize=11, fontweight="bold")
+    _qtext(ax, "Can the model rank a true winner above a true loser?")
     ax.legend(loc="lower right")
     ax.grid(alpha=0.3)
     return roc_auc
@@ -429,7 +437,8 @@ def _make_pr_axes(ax, y_val, y_prob, lime):
     ax.set_ylim([0.0, 1.05])
     ax.set_xlabel("Recall")
     ax.set_ylabel("Precision")
-    ax.set_title("Precision-Recall Curve")
+    ax.set_title("Precision-Recall Curve", fontsize=11, fontweight="bold")
+    _qtext(ax, "When the model predicts red, how reliable is that prediction?")
     ax.legend(loc="lower left")
     ax.grid(alpha=0.3)
     return ap
@@ -446,7 +455,8 @@ def _make_calibration_axes(ax, y_val, y_prob, lime):
     ax.set_ylim([0.0, 1.0])
     ax.set_xlabel("Mean Predicted Probability")
     ax.set_ylabel("Fraction of Positives")
-    ax.set_title("Calibration Curve")
+    ax.set_title("Calibration Curve", fontsize=11, fontweight="bold")
+    _qtext(ax, "When the model says 70%, is it right 70% of the time?")
     ax.legend(loc="lower right")
     ax.grid(alpha=0.3)
 
@@ -461,7 +471,8 @@ def _make_importance_axes(ax, feature_cols, model):
                   for _, r in imp_agg.iterrows()]
     ax.barh(imp_agg["feature"], imp_agg["importance"], color=colors_imp)
     ax.set_xlabel("Grouped Importance")
-    ax.set_title("Top 15 Features (grouped, red=multi-feat)")
+    ax.set_title("Top 15 Features (grouped, red=multi-feat)", fontsize=11, fontweight="bold")
+    _qtext(ax, "What actually matters for prediction?")
     ax.grid(alpha=0.3, axis="x")
 
 
@@ -474,9 +485,9 @@ def _make_shap_axes(ax, X_val, feature_cols, model):
         booster = model.get_booster()
         contribs = booster.predict(xgb.DMatrix(X_sample), pred_contribs=True)
         shap_values = contribs[:, :-1]
-        # modern beeswarm accepts an ax parameter
+        readable_names = [FEATURE_LABELS.get(c, c) for c in feature_cols]
         explanation = shap.Explanation(shap_values, data=X_sample.values,
-                                       feature_names=feature_cols)
+                                       feature_names=readable_names)
         shap.plots.beeswarm(explanation, max_display=15, ax=ax, show=False,
                             plot_size=None)
         ax.tick_params(colors="white")
@@ -486,7 +497,8 @@ def _make_shap_axes(ax, X_val, feature_cols, model):
             ax.xaxis.label.set_color("white")
         if hasattr(ax, "yaxis") and ax.yaxis.label is not None:
             ax.yaxis.label.set_color("white")
-        ax.set_title("SHAP Feature Impact (200-sample validation)", fontsize=10)
+        ax.set_title("SHAP Feature Impact (200-sample validation)", fontsize=10, fontweight="bold")
+        _qtext(ax, "How does each feature push a prediction toward red or blue?")
     except Exception as e:
         print(f"  [SHAP] failed ({e}).")
         from xgboost import plot_importance
@@ -498,10 +510,13 @@ def _make_shap_axes(ax, X_val, feature_cols, model):
 
 def plot_evaluation_dashboard(y_val, y_prob, y_pred, X_val, feature_cols, model,
                               save_path=None, title_suffix=""):
-    """Produce two 3-panel diagnostic figures for the XGBoost model.
+    """Produce a single 6-panel diagnostic figure for the XGBoost model.
 
-    Fig 1: confusion matrix, ROC curve, PR curve.
-    Fig 2: calibration curve, grouped feature importance, SHAP beeswarm.
+    2x3 grid:
+      Row 0: confusion matrix, ROC curve, PR curve.
+      Row 1: calibration curve, grouped feature importance, SHAP beeswarm.
+
+    Each subplot has a question subtitle for presentation clarity.
     """
     from sklearn.metrics import confusion_matrix
 
@@ -509,51 +524,37 @@ def plot_evaluation_dashboard(y_val, y_prob, y_pred, X_val, feature_cols, model,
     suffix = f" {title_suffix}" if title_suffix else ""
     base = f"XGBoost — Evaluation Diagnostics{suffix}"
 
-    # ---- Fig 1: Confusion Matrix, ROC, PR ----
-    fig1, axes1 = plt.subplots(1, 3, figsize=(18, 5.5))
-    fig1.suptitle(base, fontsize=15, fontweight="bold", y=1.04)
-    fig1.tight_layout(pad=4.0)
+    fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+    fig.suptitle(base, fontsize=15, fontweight="bold", y=0.98)
+    fig.tight_layout(pad=5.0)
 
+    # ---- Row 0, Col 0: Confusion Matrix ----
     cm = confusion_matrix(y_val, y_pred)
     sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
                 xticklabels=["Pred B", "Pred R"],
-                yticklabels=["True B", "True R"], ax=axes1[0])
-    axes1[0].set_title("Confusion Matrix")
-    axes1[0].set_ylabel("True Label")
-    axes1[0].set_xlabel("Predicted Label")
+                yticklabels=["True B", "True R"], ax=axes[0, 0])
+    axes[0, 0].set_title("Confusion Matrix", fontsize=11, fontweight="bold")
+    _qtext(axes[0, 0], "How many fights did the model get right?")
+    axes[0, 0].set_ylabel("True Label")
+    axes[0, 0].set_xlabel("Predicted Label")
 
-    _make_roc_axes(axes1[1], y_val, y_prob, lime)
-    _make_pr_axes(axes1[2], y_val, y_prob, lime)
+    # ---- Row 0, Col 1: ROC ----
+    _make_roc_axes(axes[0, 1], y_val, y_prob, lime)
 
-    # ---- Fig 2: Calibration, Feature Importance, SHAP ----
-    fig2, axes2 = plt.subplots(1, 3, figsize=(18, 5.5))
-    fig2.suptitle(base, fontsize=15, fontweight="bold", y=1.04)
-    fig2.tight_layout(pad=4.0)
+    # ---- Row 0, Col 2: PR ----
+    _make_pr_axes(axes[0, 2], y_val, y_prob, lime)
 
-    _make_calibration_axes(axes2[0], y_val, y_prob, lime)
-    _make_importance_axes(axes2[1], feature_cols, model)
-    _make_shap_axes(axes2[2], X_val, feature_cols, model)
+    # ---- Row 1, Col 0: Calibration ----
+    _make_calibration_axes(axes[1, 0], y_val, y_prob, lime)
 
-    # Save & show
-    if save_path:
-        from pathlib import Path
-        p = Path(save_path)
-        stem = p.stem
-        # Handle existing _fig1/_fig2 suffixes gracefully
-        if stem.endswith("_fig1") or stem.endswith("_fig2"):
-            base_stem = stem.rsplit("_", 1)[0]
-        else:
-            base_stem = stem
-        ext = p.suffix
-        fig1_path = str(p.with_name(f"{base_stem}_fig1{ext}"))
-        fig2_path = str(p.with_name(f"{base_stem}_fig2{ext}"))
-    else:
-        fig1_path = fig2_path = None
+    # ---- Row 1, Col 1: Feature Importance ----
+    _make_importance_axes(axes[1, 1], feature_cols, model)
 
-    _save_and_show(fig1_path, fig1, f"{base} — Fig1")
-    _save_and_show(fig2_path, fig2, f"{base} — Fig2")
-    plt.close(fig1)
-    plt.close(fig2)
+    # ---- Row 1, Col 2: SHAP ----
+    _make_shap_axes(axes[1, 2], X_val, feature_cols, model)
+
+    _save_and_show(save_path, fig, base)
+    plt.close(fig)
     print(f"  Evaluation dashboard rendered ({suffix}).")
 
 
@@ -577,7 +578,7 @@ def _aggregate_importance(feature_names, raw_importances):
         total = sum(imp_map.get(m, 0) for m in members)
         rows.append({"feature": group_name, "importance": total, "n": len(members)})
     for feat in sorted(remaining):
-        rows.append({"feature": feat, "importance": imp_map.get(feat, 0), "n": 1})
+        rows.append({"feature": FEATURE_LABELS.get(feat, feat), "importance": imp_map.get(feat, 0), "n": 1})
     return pd.DataFrame(rows).sort_values("importance", ascending=False)
 
 
@@ -599,7 +600,8 @@ def _make_model_roc_axes(ax, y_val, probs, subset_label):
     ax.set_ylim(0, 1.05)
     ax.set_xlabel("False Positive Rate")
     ax.set_ylabel("True Positive Rate")
-    ax.set_title(f"ROC — {subset_label}")
+    ax.set_title(f"ROC \u2014 {subset_label}", fontsize=11, fontweight="bold")
+    _qtext(ax, "Which model best separates winners from losers?")
     ax.legend(loc="lower right", fontsize=8)
     ax.grid(alpha=0.3)
 
@@ -622,7 +624,8 @@ def _make_model_pr_axes(ax, y_val, probs, subset_label):
     ax.set_ylim(0, 1.05)
     ax.set_xlabel("Recall")
     ax.set_ylabel("Precision")
-    ax.set_title(f"PR — {subset_label}")
+    ax.set_title(f"PR \u2014 {subset_label}", fontsize=11, fontweight="bold")
+    _qtext(ax, "Do confident predictions stay reliable across models?")
     ax.legend(loc="lower left", fontsize=8)
     ax.grid(alpha=0.3)
 
@@ -645,7 +648,8 @@ def _make_model_bar_axes(ax, y_val, probs, subset_label):
     ax.set_xticklabels(labels, fontsize=8)
     ax.set_ylim(0.4, 0.8)
     ax.set_ylabel("Score")
-    ax.set_title(f"Accuracy & AUC — {subset_label}")
+    ax.set_title(f"Accuracy & AUC \u2014 {subset_label}", fontsize=11, fontweight="bold")
+    _qtext(ax, "Which model achieves the highest scores?")
     ax.legend(fontsize=8)
     ax.grid(alpha=0.3, axis="y")
     for b in list(bars1) + list(bars2):
@@ -656,10 +660,10 @@ def _make_model_bar_axes(ax, y_val, probs, subset_label):
 def plot_model_comparison(y_val_full, probs_full, elo_prob_full,
                           y_val_2005, probs_2005, elo_prob_2005,
                           save_path=None):
-    """Two 3-panel figures comparing 3 models + ELO on full and 2005+ subsets.
+    """Single 2x3 figure comparing 3 models + ELO on full and 2005+ subsets.
 
-    Fig 1: Full dataset — ROC, PR, Accuracy/AUC bars.
-    Fig 2: 2005+ subset — ROC, PR, Accuracy/AUC bars.
+    Row 0: Full dataset — ROC, PR, Accuracy/AUC bars.
+    Row 1: 2005+ subset — ROC, PR, Accuracy/AUC bars.
     """
     subset_a = "Full Dataset"
     subset_b = "2005+ Subset"
@@ -672,35 +676,22 @@ def plot_model_comparison(y_val_full, probs_full, elo_prob_full,
     if elo_prob_2005 is not None:
         all_probs_b["ELO"] = elo_prob_2005
 
-    # Fig 1: Full dataset
-    fig1, axes1 = plt.subplots(1, 3, figsize=(18, 5.5))
-    fig1.suptitle(f"Model Comparison — {subset_a}", fontsize=15, fontweight="bold", y=1.04)
-    fig1.tight_layout(pad=4.0)
-    _make_model_roc_axes(axes1[0], y_val_full, all_probs_a, subset_a)
-    _make_model_pr_axes(axes1[1], y_val_full, all_probs_a, subset_a)
-    _make_model_bar_axes(axes1[2], y_val_full, probs_full, subset_a)
+    fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+    fig.suptitle("Model Comparison", fontsize=15, fontweight="bold", y=0.98)
+    fig.tight_layout(pad=5.0)
 
-    # Fig 2: 2005+ subset
-    fig2, axes2 = plt.subplots(1, 3, figsize=(18, 5.5))
-    fig2.suptitle(f"Model Comparison — {subset_b}", fontsize=15, fontweight="bold", y=1.04)
-    fig2.tight_layout(pad=4.0)
-    _make_model_roc_axes(axes2[0], y_val_2005, all_probs_b, subset_b)
-    _make_model_pr_axes(axes2[1], y_val_2005, all_probs_b, subset_b)
-    _make_model_bar_axes(axes2[2], y_val_2005, probs_2005, subset_b)
+    # Row 0: Full dataset
+    _make_model_roc_axes(axes[0, 0], y_val_full, all_probs_a, subset_a)
+    _make_model_pr_axes(axes[0, 1], y_val_full, all_probs_a, subset_a)
+    _make_model_bar_axes(axes[0, 2], y_val_full, probs_full, subset_a)
+
+    # Row 1: 2005+ subset
+    _make_model_roc_axes(axes[1, 0], y_val_2005, all_probs_b, subset_b)
+    _make_model_pr_axes(axes[1, 1], y_val_2005, all_probs_b, subset_b)
+    _make_model_bar_axes(axes[1, 2], y_val_2005, probs_2005, subset_b)
 
     if save_path:
-        from pathlib import Path
-        p = Path(save_path)
-        stem = p.stem
-        if stem.endswith("_fig1") or stem.endswith("_fig2"):
-            base_stem = stem.rsplit("_", 1)[0]
-        else:
-            base_stem = stem
-        ext = p.suffix
-        fig1.savefig(str(p.with_name(f"{base_stem}_fig1{ext}")), dpi=150, bbox_inches="tight")
-        fig2.savefig(str(p.with_name(f"{base_stem}_fig2{ext}")), dpi=150, bbox_inches="tight")
-    fig1.show()
-    fig2.show()
-    plt.close(fig1)
-    plt.close(fig2)
-    print("  Model comparison plots saved.")
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    fig.show()
+    plt.close(fig)
+    print("  Model comparison plot saved.")

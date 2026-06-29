@@ -1,0 +1,31 @@
+#comments on plots
+
+1. Confusion Matrix
+
+How many fights did the model get right?  
+The diagonal (red-wins + blue-wins) sums to ~1320 correct out of 2016 (65.5% accuracy). The model misclassifies both corners at similar rates (~300-400 each), showing no residual red-corner bias — the symmetrization worked.
+
+2. ROC Curve
+
+Can the model rank a true winner above a true loser?  
+AUC = 0.703 — significantly above random (0.50) and the ELO baseline (~0.54). The curve stays above the diagonal at every false-positive rate, meaning discrimination holds across all thresholds, not just the default 0.50.
+
+3. PR Curve
+
+When the model predicts red, how reliable is that prediction?  
+AP = 0.666. At high thresholds (>70% confidence) precision stays near 80%, so the model's strong opinions are trustworthy. Precision drops toward the class prevalence (~50%) as the threshold loosens.
+
+4. Calibration Curve
+
+When the model says "70%," is it right 70% of the time?  
+The curve tracks the diagonal reasonably well in the middle (30-70%) but shows overconfidence at the extremes: the model predicts ~90% for fights it actually wins ~83% of the time. This is typical of gradient boosting — important context for anyone using probabilities for betting.
+
+5. Grouped Feature Importance
+
+What actually matters for prediction?  
+ELO dominates at ~3× the next group (striking volume). Striking defense and takedown defense follow. Reach and height rank low — skill and history matter more than physical attributes. Red bars are multi-feature groups; blue are single features.
+
+6. SHAP Beeswarm
+
+How does each feature push a prediction toward red or blue?  
+ELO_diff is the most impactful: red points (high ELO advantage) push strongly toward a red-win prediction. Striking_score_diff shows a clear gradient too. The wide spread in several features (e.g., striking defense) means their impact is context-dependent — a good defender helps against strikers but not against grapplers.
