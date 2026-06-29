@@ -187,6 +187,15 @@ def main(argv=None):
     )
     print_comparison_table(results_2005)
 
+    # 2005+ XGBoost evaluation dashboard
+    y_prob_xgb_2005 = probs_2005["XGBoost"]
+    y_pred_xgb_2005 = (y_prob_xgb_2005 >= 0.5).astype(int)
+    plot_evaluation_dashboard(
+        y_va_2005, y_prob_xgb_2005, y_pred_xgb_2005, feature_cols, model_2005,
+        save_path=os.path.join(OUTPUT_DIR, "plots", "xgb_evaluation_dashboard_2005.png"),
+        title_suffix="(Post 2005)",
+    )
+
     # ELO baseline for 2005+ subset
     elo_diff_2005 = np.nan_to_num(val_2005["elo_diff"].values, nan=0.0)
     elo_range_2005 = elo_diff_2005.max() - elo_diff_2005.min()

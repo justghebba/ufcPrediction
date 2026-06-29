@@ -5,6 +5,7 @@ main prediction pipeline pending leakage fixes."""
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
 from config import ADVANTAGE_FEATURE_COLS
 
 
@@ -117,8 +118,9 @@ def plot_rolling_results(coeff_df, window_midpoints, window_accs, window_sizes, 
     fig, axes = plt.subplots(2, 1, figsize=(14, 12))
 
     ax = axes[0]
-    for col in coeff_df.columns:
-        ax.plot(coeff_df.index, coeff_df[col], label=col, linewidth=2)
+    palette = sns.color_palette("husl", n_colors=len(coeff_df.columns))
+    for i, col in enumerate(coeff_df.columns):
+        ax.plot(coeff_df.index, coeff_df[col], label=col, linewidth=2, color=palette[i])
     ax.axhline(y=0, color="gray", linestyle="--", alpha=0.5)
     ax.set_xlabel("Window Midpoint")
     ax.set_ylabel("Coefficient (standardized features)")

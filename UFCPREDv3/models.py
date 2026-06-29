@@ -377,7 +377,8 @@ def print_threshold_summary(y_val_dict, y_prob_dict):
 # 9.  Plotting helpers (evaluation dashboard)
 # ---------------------------------------------------------------------------
 
-def plot_evaluation_dashboard(y_val, y_prob, y_pred, feature_cols, model, save_path=None):
+def plot_evaluation_dashboard(y_val, y_prob, y_pred, feature_cols, model,
+                              save_path=None, title_suffix=""):
     """Produce a 6-panel diagnostic figure for the XGBoost model.
 
     Panels: confusion matrix, ROC curve, PR curve, calibration, feature
@@ -389,8 +390,11 @@ def plot_evaluation_dashboard(y_val, y_prob, y_pred, feature_cols, model, save_p
     )
     from sklearn.calibration import calibration_curve
 
+    lime = "limegreen"
+
     fig, axes = plt.subplots(2, 3, figsize=(20, 14))
-    fig.suptitle("XGBoost Model — Evaluation Diagnostics", fontsize=16, fontweight="bold", y=1.02)
+    fig.suptitle(f"XGBoost Model — Evaluation Diagnostics {title_suffix}".strip(),
+                 fontsize=16, fontweight="bold", y=1.02)
     fig.tight_layout(pad=5.0)
 
     cm = confusion_matrix(y_val, y_pred)
@@ -404,7 +408,7 @@ def plot_evaluation_dashboard(y_val, y_prob, y_pred, feature_cols, model, save_p
     fpr, tpr, _ = roc_curve(y_val, y_prob)
     roc_auc = auc(fpr, tpr)
     axes[0, 1].plot(fpr, tpr, color="darkorange", lw=2, label=f"ROC (AUC = {roc_auc:.3f})")
-    axes[0, 1].plot([0, 1], [0, 1], "k--", lw=1, alpha=0.6, label="Random")
+    axes[0, 1].plot([0, 1], [0, 1], "--", color=lime, lw=1.5, alpha=0.7, label="Random")
     axes[0, 1].set_xlim([0.0, 1.0])
     axes[0, 1].set_ylim([0.0, 1.05])
     axes[0, 1].set_xlabel("False Positive Rate")
@@ -415,8 +419,8 @@ def plot_evaluation_dashboard(y_val, y_prob, y_pred, feature_cols, model, save_p
 
     precision, recall, _ = precision_recall_curve(y_val, y_prob)
     ap = average_precision_score(y_val, y_prob)
-    axes[0, 2].plot(recall, precision, color="green", lw=2, label=f"AP = {ap:.3f}")
-    axes[0, 2].axhline(y=y_val.mean(), color="gray", linestyle="--", lw=1, alpha=0.6,
+    axes[0, 2].plot(recall, precision, color="darkorange", lw=2, label=f"AP = {ap:.3f}")
+    axes[0, 2].axhline(y=y_val.mean(), linestyle="--", color=lime, lw=1.5, alpha=0.7,
                        label=f"Baseline ({y_val.mean():.2f})")
     axes[0, 2].set_xlim([0.0, 1.0])
     axes[0, 2].set_ylim([0.0, 1.05])
@@ -428,7 +432,8 @@ def plot_evaluation_dashboard(y_val, y_prob, y_pred, feature_cols, model, save_p
 
     prob_true, prob_pred = calibration_curve(y_val, y_prob, n_bins=10, strategy="uniform")
     axes[1, 0].plot(prob_pred, prob_true, marker="o", lw=2, label="XGBoost")
-    axes[1, 0].plot([0, 1], [0, 1], "k--", lw=1, alpha=0.6, label="Perfect calibration")
+    axes[1, 0].plot([0, 1], [0, 1], "--", color=lime, lw=1.5, alpha=0.7,
+                    label="Perfect calibration")
     axes[1, 0].set_xlim([0.0, 1.0])
     axes[1, 0].set_ylim([0.0, 1.0])
     axes[1, 0].set_xlabel("Mean Predicted Probability")
