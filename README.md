@@ -1,8 +1,8 @@
-# UFCPREDv3 — Modular UFC Fight Prediction Pipeline
+# UFCPREDv3.5 — Modular UFC Fight Prediction Pipeline
 
 ## 1. Project Overview
 
-UFCPREDv3 is a machine learning system that predicts the winner of UFC fights. Given two fighters and a fight date, it produces a win probability by combining:
+UFCPREDv3.5 is a machine learning system that predicts the winner of UFC fights. Given two fighters and a fight date, it produces a win probability by combining:
 
 - **Career statistics** (striking volume, accuracy, grappling, knockdowns, submissions)
 - **Opponent-adjusted metrics** (how good a fighter's stats look after accounting for strength of schedule)
@@ -72,7 +72,7 @@ The core of the system is a **chronological feature engine** that processes figh
 - `same_stance`, indicator flags for southpaw
 - **Opponent-adjusted scores**: striking_offense * (opponent_striking_defense / global_avg_striking_def), computed separately for striking and grappling — this prices in schedule strength.
 
-The full feature matrix after symmetrization (see Phase 4) contains **105 feature columns**.
+The full feature matrix after symmetrization (see Phase 4) contains **91 feature columns** (reduced from 105 after dropping per-corner physicals that carry no signal after symmetrization).
 
 ### Phase 4 — Modeling (`models.py`, `inference.py`)
 
@@ -193,8 +193,8 @@ outputs/
   models/
     (model pickles — future)
   plots/
-    xgb_evaluation_dashboard.png   — confusion matrix, ROC, PR, calibration, grouped importance
-    model_comparison.png           — ROC/PR for all 3 models + ELO baseline (full + 2005+)
+    xgb_evaluation_dashboard.png   — 2×3 figure: confusion matrix, ROC, PR, calibration, grouped importance, SHAP
+    model_comparison.png           — 2×3 figure: ROC/PR/bars for all 3 models (full + 2005+ subsets)
     rolling_window_meta.png        — only if diagnostics enabled
 ```
 
@@ -290,7 +290,7 @@ Major evolution. Still a monolithic notebook but substantially expanded.
 
 ---
 
-### UFCPREDv3 (Current — 11 modules, ~2,077 lines)
+### UFCPREDv3 (11 modules, ~2,077 lines)
 
 Complete rewrite from monolithic notebook to modular, importable Python package.
 
@@ -402,3 +402,78 @@ even when the latter is more predictive. Normalizing makes every feature's impor
 comparable on the same scale. Tree models are theoretically scale-invariant, but
 regularization and early stopping can still be affected — the empirical results show
 a slight improvement (XGBoost 0.644 → 0.655).
+
+---
+
+### UFCPREDv3.2 (SHAP Native + Split Figures)
+
+SHAP compatibility and figure layout refinement for readability.
+
+**Changes from v3.1:**
+
+| Area | v3.1 | v3.2 |
+|---|---|---|
+| SHAP computation | `shap.TreeExplainer` (breaks with shap 0.47+, Python 3.14+) | XGBoost native `predict(..., pred_contribs=True)` — no shap version dependency |
+| Evaluation dashboard | Single 6-panel figure | Split into two 3-panel figures (Fig1: confusion/ROC/PR, Fig2: calibration/importance/SHAP) |
+| Model comparison | Single 6-panel figure | Split into two 3-panel figures (Fig1: full, Fig2: 2005+) |
+| SHAP label colors | Default (dark on dark background) | White tick labels via `ax.tick_params(colors="white")` |
+| Rolling colors | Default palette | `sns.color_palette("husl")` for distinct line colors |
+
+**New features added:**
+- SHAP beeswarm embedded into the evaluation dashboard figure using `shap.plots.beeswarm(ax=ax, show=False)`
+- `_in_notebook()` + `_save_and_show()` — adaptive figure showing (inline in Jupyter, non-blocking in CLI)
+
+**Fix details:** SHAP 0.47+ changed the internal TreeExplainer API, causing a mismatch when parsing XGBoost models trained with newer xgboost versions. By calling `booster.predict(xgb.DMatrix(X), pred_contribs=True)` directly, we bypass shap's model parser entirely — the contributions come from XGBoost's own C++ backend, which is always compatible.
+
+---
+
+### UFCPREDv3.3 (Notebook Display Fixes)
+
+Plots now render inline in Jupyter, warnings cleaned.
+
+**Changes from v3.2:**
+
+| Area | v3.2 | v3.3 |
+|---|---|---|
+| Plot display | `fig.show()` — doesn't render in Jupyter inline backend | `plt.show()` in notebooks (via `_in_notebook()` detection), `fig.show()` in CLI |
+| sklearn warnings | `RuntimeWarning: invalid value encountered in divide` (from StandardScaler on constant features) | Filtered via `warnings.filterwarnings` for `sklearn.utils.extmath` |
+
+---
+
+### UFCPREDv3.4 (Grey Questions + Readable SHAP Labels + Single-Fig Model Comparison)
+
+Presentation-ready figures with explanatory subtitles and human-readable feature names.
+
+**Changes from v3.3:**
+
+| Area | v3.3 | v3.4 |
+|---|---|---|
+| Evaluation dashboard | Titles only (no questions) | Grey italic question under each subplot via `_qtext()` helper (e.g., *"Can the model rank a true winner above a true loser?"*) |
+| Model comparison | Two separate 3-panel figures | Single 2×3 figure (Row 0: Full, Row 1: 2005+) with grey questions |
+| SHAP feature names | Raw column names (e.g., `elo_diff`, `fighter_r_sig_landed_per_fight`) | Readable labels via `FEATURE_LABELS` dict (e.g., "ELO Rating Advantage", "Red Strikes Landed/Fight") |
+| Importance feature names | Raw names for ungrouped features | Readable labels for ungrouped features (group names already human-readable) |
+| Confusion matrix label | Bold white title only | Bold white title + grey question |
+
+**Question text added to each plot:**
+
+| Plot | Question |
+|---|---|
+| Confusion Matrix | "How many fights did the model get right?" |
+| ROC Curve | "Can the model rank a true winner above a true loser?" |
+| PR Curve | "When the model predicts red, how reliable is that prediction?" |
+| Calibration Curve | "When the model says 70%, is it right 70% of the time?" |
+| Feature Importance | "What actually matters for prediction?" |
+| SHAP | "How does each feature push a prediction toward red or blue?" |
+| Model ROC (both subsets) | "Which model best separates winners from losers?" |
+| Model PR (both subsets) | "Do confident predictions stay reliable across models?" |
+| Model Bars (both subsets) | "Which model achieves the highest scores?" |
+
+---
+
+### UFCPREDv3.5 (Presentation Polish)
+
+Final presentation-ready version.
+
+**Changes from v3.4:**
+- Minor bug fixes for readability and presentation purpose
+- `README.md` updated to reflect all v3.2–v3.5 changes
