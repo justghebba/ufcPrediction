@@ -168,7 +168,7 @@ def main(argv=None):
     y_prob_xgb = probs_full["XGBoost"]
     y_pred_xgb = (y_prob_xgb >= 0.5).astype(int)
     plot_evaluation_dashboard(
-        y_val, y_prob_xgb, y_pred_xgb, feature_cols, xgb_model,
+        y_val, y_prob_xgb, y_pred_xgb, X_val, feature_cols, xgb_model,
         save_path=os.path.join(OUTPUT_DIR, "plots", "xgb_evaluation_dashboard.png"),
     )
 
@@ -191,7 +191,7 @@ def main(argv=None):
     y_prob_xgb_2005 = probs_2005["XGBoost"]
     y_pred_xgb_2005 = (y_prob_xgb_2005 >= 0.5).astype(int)
     plot_evaluation_dashboard(
-        y_va_2005, y_prob_xgb_2005, y_pred_xgb_2005, feature_cols, model_2005,
+        y_va_2005, y_prob_xgb_2005, y_pred_xgb_2005, X_va_2005, feature_cols, model_2005,
         save_path=os.path.join(OUTPUT_DIR, "plots", "xgb_evaluation_dashboard_2005.png"),
         title_suffix="(Post 2005)",
     )

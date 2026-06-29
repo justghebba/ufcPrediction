@@ -6,6 +6,7 @@ import seaborn as sns
 from config import CUTOFF_DATE, CUTOFF_2005, XGB_PARAMS, RF_PARAMS, LR_PARAMS, OUTPUT_DIR, FEATURE_GROUPS
 
 warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="sklearn.utils.extmath")
 
 # ---------------------------------------------------------------------------
 # 1.  Symmetrization & target preparation
@@ -374,109 +375,186 @@ def print_threshold_summary(y_val_dict, y_prob_dict):
 
 
 # ---------------------------------------------------------------------------
-# 9.  Plotting helpers (evaluation dashboard)
+# 9.  Plotting helpers (evaluation dashboard — two 3-panel figures)
 # ---------------------------------------------------------------------------
 
-def plot_evaluation_dashboard(y_val, y_prob, y_pred, feature_cols, model,
-                              save_path=None, title_suffix=""):
-    """Produce a 6-panel diagnostic figure for the XGBoost model.
+def _in_notebook():
+    try:
+        from IPython import get_ipython
+        shell = get_ipython()
+        if shell is None:
+            return False
+        return "ipykernel" in shell.__class__.__module__
+    except (ImportError, AttributeError):
+        return False
 
-    Panels: confusion matrix, ROC curve, PR curve, calibration, feature
-    importance, and SHAP beeswarm summary.
-    """
-    from sklearn.metrics import (
-        confusion_matrix, roc_curve, precision_recall_curve,
-        auc, average_precision_score,
-    )
-    from sklearn.calibration import calibration_curve
 
-    lime = "limegreen"
+def _save_and_show(save_path, fig, label):
+    """Save a figure if a path is given, then show it (inline in Jupyter)."""
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"  Plot saved: {label}")
+    if _in_notebook():
+        plt.show()
+    else:
+        fig.show()
 
-    fig, axes = plt.subplots(2, 3, figsize=(20, 14))
-    fig.suptitle(f"XGBoost Model — Evaluation Diagnostics {title_suffix}".strip(),
-                 fontsize=16, fontweight="bold", y=1.02)
-    fig.tight_layout(pad=5.0)
 
-    cm = confusion_matrix(y_val, y_pred)
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                xticklabels=["Pred B", "Pred R"],
-                yticklabels=["True B", "True R"], ax=axes[0, 0])
-    axes[0, 0].set_title(f"Confusion Matrix")
-    axes[0, 0].set_ylabel("True Label")
-    axes[0, 0].set_xlabel("Predicted Label")
-
+def _make_roc_axes(ax, y_val, y_prob, lime):
+    """Draw ROC curve + random baseline on a single axes."""
+    from sklearn.metrics import roc_curve, auc
     fpr, tpr, _ = roc_curve(y_val, y_prob)
     roc_auc = auc(fpr, tpr)
-    axes[0, 1].plot(fpr, tpr, color="darkorange", lw=2, label=f"ROC (AUC = {roc_auc:.3f})")
-    axes[0, 1].plot([0, 1], [0, 1], "--", color=lime, lw=1.5, alpha=0.7, label="Random")
-    axes[0, 1].set_xlim([0.0, 1.0])
-    axes[0, 1].set_ylim([0.0, 1.05])
-    axes[0, 1].set_xlabel("False Positive Rate")
-    axes[0, 1].set_ylabel("True Positive Rate")
-    axes[0, 1].set_title("ROC Curve")
-    axes[0, 1].legend(loc="lower right")
-    axes[0, 1].grid(alpha=0.3)
+    ax.plot(fpr, tpr, color="darkorange", lw=2, label=f"ROC (AUC = {roc_auc:.3f})")
+    ax.plot([0, 1], [0, 1], "--", color=lime, lw=1.5, alpha=0.7, label="Random")
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.set_title("ROC Curve")
+    ax.legend(loc="lower right")
+    ax.grid(alpha=0.3)
+    return roc_auc
 
+
+def _make_pr_axes(ax, y_val, y_prob, lime):
+    """Draw PR curve + baseline on a single axes."""
+    from sklearn.metrics import precision_recall_curve, average_precision_score
     precision, recall, _ = precision_recall_curve(y_val, y_prob)
     ap = average_precision_score(y_val, y_prob)
-    axes[0, 2].plot(recall, precision, color="darkorange", lw=2, label=f"AP = {ap:.3f}")
-    axes[0, 2].axhline(y=y_val.mean(), linestyle="--", color=lime, lw=1.5, alpha=0.7,
-                       label=f"Baseline ({y_val.mean():.2f})")
-    axes[0, 2].set_xlim([0.0, 1.0])
-    axes[0, 2].set_ylim([0.0, 1.05])
-    axes[0, 2].set_xlabel("Recall")
-    axes[0, 2].set_ylabel("Precision")
-    axes[0, 2].set_title("Precision-Recall Curve")
-    axes[0, 2].legend(loc="lower left")
-    axes[0, 2].grid(alpha=0.3)
+    ax.plot(recall, precision, color="darkorange", lw=2, label=f"AP = {ap:.3f}")
+    ax.axhline(y=y_val.mean(), linestyle="--", color=lime, lw=1.5, alpha=0.7,
+               label=f"Baseline ({y_val.mean():.2f})")
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_title("Precision-Recall Curve")
+    ax.legend(loc="lower left")
+    ax.grid(alpha=0.3)
+    return ap
 
+
+def _make_calibration_axes(ax, y_val, y_prob, lime):
+    """Draw calibration curve + perfect line on a single axes."""
+    from sklearn.calibration import calibration_curve
     prob_true, prob_pred = calibration_curve(y_val, y_prob, n_bins=10, strategy="uniform")
-    axes[1, 0].plot(prob_pred, prob_true, marker="o", lw=2, label="XGBoost")
-    axes[1, 0].plot([0, 1], [0, 1], "--", color=lime, lw=1.5, alpha=0.7,
-                    label="Perfect calibration")
-    axes[1, 0].set_xlim([0.0, 1.0])
-    axes[1, 0].set_ylim([0.0, 1.0])
-    axes[1, 0].set_xlabel("Mean Predicted Probability")
-    axes[1, 0].set_ylabel("Fraction of Positives")
-    axes[1, 0].set_title("Calibration Curve")
-    axes[1, 0].legend(loc="lower right")
-    axes[1, 0].grid(alpha=0.3)
+    ax.plot(prob_pred, prob_true, marker="o", lw=2, label="XGBoost")
+    ax.plot([0, 1], [0, 1], "--", color=lime, lw=1.5, alpha=0.7,
+            label="Perfect calibration")
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.0])
+    ax.set_xlabel("Mean Predicted Probability")
+    ax.set_ylabel("Fraction of Positives")
+    ax.set_title("Calibration Curve")
+    ax.legend(loc="lower right")
+    ax.grid(alpha=0.3)
 
-    # Feature importance (grouped)
+
+def _make_importance_axes(ax, feature_cols, model):
+    """Draw grouped feature importance bar chart on a single axes."""
     imp_agg = _aggregate_importance(
         feature_cols[:len(model.feature_importances_)],
         model.feature_importances_
     ).head(15).sort_values("importance")
     colors_imp = ["#E63946" if r["n"] > 1 else "#457B9D"
                   for _, r in imp_agg.iterrows()]
-    axes[1, 1].barh(imp_agg["feature"], imp_agg["importance"],
-                    color=colors_imp)
-    axes[1, 1].set_xlabel("Grouped Importance")
-    axes[1, 1].set_title("Top 15 Features (grouped, red=multi-feat)")
-    axes[1, 1].grid(alpha=0.3, axis="x")
+    ax.barh(imp_agg["feature"], imp_agg["importance"], color=colors_imp)
+    ax.set_xlabel("Grouped Importance")
+    ax.set_title("Top 15 Features (grouped, red=multi-feat)")
+    ax.grid(alpha=0.3, axis="x")
 
-    # SHAP beeswarm
+
+def _make_shap_axes(ax, X_val, feature_cols, model):
+    """Draw SHAP beeswarm onto a given axes object."""
     try:
         import shap
-        X_sample = pd.DataFrame(X_val.values[:200], columns=feature_cols)
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_sample)
-        shap.summary_plot(shap_values, X_sample, feature_names=feature_cols,
-                          show=False, plot_size=(8, 6))
-        shap_fig = plt.gcf()
-        shap_fig.suptitle("SHAP Feature Impact (200-sample validation)", fontsize=13)
-    except Exception:
+        import xgboost as xgb
+        X_sample = X_val.iloc[:200]
+        booster = model.get_booster()
+        contribs = booster.predict(xgb.DMatrix(X_sample), pred_contribs=True)
+        shap_values = contribs[:, :-1]
+        # modern beeswarm accepts an ax parameter
+        explanation = shap.Explanation(shap_values, data=X_sample.values,
+                                       feature_names=feature_cols)
+        shap.plots.beeswarm(explanation, max_display=15, ax=ax, show=False,
+                            plot_size=None)
+        ax.tick_params(colors="white")
+        for label in ax.get_xticklabels() + ax.get_yticklabels():
+            label.set_color("white")
+        if hasattr(ax, "xaxis") and ax.xaxis.label is not None:
+            ax.xaxis.label.set_color("white")
+        if hasattr(ax, "yaxis") and ax.yaxis.label is not None:
+            ax.yaxis.label.set_color("white")
+        ax.set_title("SHAP Feature Impact (200-sample validation)", fontsize=10)
+    except Exception as e:
+        print(f"  [SHAP] failed ({e}).")
         from xgboost import plot_importance
-        axes[1, 2].remove()
-        ax_imp = fig.add_subplot(2, 3, 6)
-        plot_importance(model.get_booster(), max_num_features=15, ax=ax_imp,
+        plot_importance(model.get_booster(), max_num_features=15, ax=ax,
                         importance_type="weight")
-        ax_imp.set_title("XGBoost Importance (SHAP unavailable)")
+        ax.set_title("XGBoost Importance (SHAP unavailable)")
+    return ax
 
+
+def plot_evaluation_dashboard(y_val, y_prob, y_pred, X_val, feature_cols, model,
+                              save_path=None, title_suffix=""):
+    """Produce two 3-panel diagnostic figures for the XGBoost model.
+
+    Fig 1: confusion matrix, ROC curve, PR curve.
+    Fig 2: calibration curve, grouped feature importance, SHAP beeswarm.
+    """
+    from sklearn.metrics import confusion_matrix
+
+    lime = "limegreen"
+    suffix = f" {title_suffix}" if title_suffix else ""
+    base = f"XGBoost — Evaluation Diagnostics{suffix}"
+
+    # ---- Fig 1: Confusion Matrix, ROC, PR ----
+    fig1, axes1 = plt.subplots(1, 3, figsize=(18, 5.5))
+    fig1.suptitle(base, fontsize=15, fontweight="bold", y=1.04)
+    fig1.tight_layout(pad=4.0)
+
+    cm = confusion_matrix(y_val, y_pred)
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                xticklabels=["Pred B", "Pred R"],
+                yticklabels=["True B", "True R"], ax=axes1[0])
+    axes1[0].set_title("Confusion Matrix")
+    axes1[0].set_ylabel("True Label")
+    axes1[0].set_xlabel("Predicted Label")
+
+    _make_roc_axes(axes1[1], y_val, y_prob, lime)
+    _make_pr_axes(axes1[2], y_val, y_prob, lime)
+
+    # ---- Fig 2: Calibration, Feature Importance, SHAP ----
+    fig2, axes2 = plt.subplots(1, 3, figsize=(18, 5.5))
+    fig2.suptitle(base, fontsize=15, fontweight="bold", y=1.04)
+    fig2.tight_layout(pad=4.0)
+
+    _make_calibration_axes(axes2[0], y_val, y_prob, lime)
+    _make_importance_axes(axes2[1], feature_cols, model)
+    _make_shap_axes(axes2[2], X_val, feature_cols, model)
+
+    # Save & show
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.show()
-    print("Evaluation dashboard rendered.")
+        from pathlib import Path
+        p = Path(save_path)
+        stem = p.stem
+        # Handle existing _fig1/_fig2 suffixes gracefully
+        if stem.endswith("_fig1") or stem.endswith("_fig2"):
+            base_stem = stem.rsplit("_", 1)[0]
+        else:
+            base_stem = stem
+        ext = p.suffix
+        fig1_path = str(p.with_name(f"{base_stem}_fig1{ext}"))
+        fig2_path = str(p.with_name(f"{base_stem}_fig2{ext}"))
+    else:
+        fig1_path = fig2_path = None
+
+    _save_and_show(fig1_path, fig1, f"{base} — Fig1")
+    _save_and_show(fig2_path, fig2, f"{base} — Fig2")
+    plt.close(fig1)
+    plt.close(fig2)
+    print(f"  Evaluation dashboard rendered ({suffix}).")
 
 
 def _aggregate_importance(feature_names, raw_importances):
@@ -503,94 +581,126 @@ def _aggregate_importance(feature_names, raw_importances):
     return pd.DataFrame(rows).sort_values("importance", ascending=False)
 
 
+def _make_model_roc_axes(ax, y_val, probs, subset_label):
+    """Plot overlaid ROC curves for all models on a single axes."""
+    from sklearn.metrics import roc_curve, auc
+    colors = {"XGBoost": "#E63946", "Random Forest": "#457B9D",
+              "Logistic Reg": "#2A9D8F", "ELO": "#E9C46A"}
+    styles = {"XGBoost": "-", "Random Forest": "--",
+              "Logistic Reg": ":", "ELO": "-."}
+    for name, prob in probs.items():
+        fpr, tpr, _ = roc_curve(y_val, prob)
+        roc_auc = auc(fpr, tpr)
+        ax.plot(fpr, tpr, color=colors.get(name, "gray"),
+                linestyle=styles.get(name, "-"),
+                lw=2, label=f"{name} (AUC={roc_auc:.3f})")
+    ax.plot([0, 1], [0, 1], "k--", lw=1, alpha=0.4)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1.05)
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.set_title(f"ROC — {subset_label}")
+    ax.legend(loc="lower right", fontsize=8)
+    ax.grid(alpha=0.3)
+
+
+def _make_model_pr_axes(ax, y_val, probs, subset_label):
+    """Plot overlaid PR curves for all models on a single axes."""
+    from sklearn.metrics import precision_recall_curve, average_precision_score
+    colors = {"XGBoost": "#E63946", "Random Forest": "#457B9D",
+              "Logistic Reg": "#2A9D8F", "ELO": "#E9C46A"}
+    styles = {"XGBoost": "-", "Random Forest": "--",
+              "Logistic Reg": ":", "ELO": "-."}
+    for name, prob in probs.items():
+        precision, recall, _ = precision_recall_curve(y_val, prob)
+        ap = average_precision_score(y_val, prob)
+        ax.plot(recall, precision, color=colors.get(name, "gray"),
+                linestyle=styles.get(name, "-"),
+                lw=2, label=f"{name} (AP={ap:.3f})")
+    ax.axhline(y=y_val.mean(), color="gray", linestyle="--", lw=1, alpha=0.4)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1.05)
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_title(f"PR — {subset_label}")
+    ax.legend(loc="lower left", fontsize=8)
+    ax.grid(alpha=0.3)
+
+
+def _make_model_bar_axes(ax, y_val, probs, subset_label):
+    """Plot side-by-side accuracy/AUC bars for all models on a single axes."""
+    from sklearn.metrics import accuracy_score, roc_auc_score
+    labels = list(probs.keys())
+    accs = []
+    aucs = []
+    for name in labels:
+        pred = (probs[name] >= 0.5).astype(int)
+        accs.append(accuracy_score(y_val, pred))
+        aucs.append(roc_auc_score(y_val, probs[name]))
+    x = np.arange(len(labels))
+    w = 0.35
+    bars1 = ax.bar(x - w/2, accs, w, label="Accuracy", color="#457B9D")
+    bars2 = ax.bar(x + w/2, aucs, w, label="AUC-ROC", color="#2A9D8F")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=8)
+    ax.set_ylim(0.4, 0.8)
+    ax.set_ylabel("Score")
+    ax.set_title(f"Accuracy & AUC — {subset_label}")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3, axis="y")
+    for b in list(bars1) + list(bars2):
+        ax.text(b.get_x() + b.get_width()/2, b.get_height() + 0.005,
+                f"{b.get_height():.2f}", ha="center", va="bottom", fontsize=7)
+
+
 def plot_model_comparison(y_val_full, probs_full, elo_prob_full,
                           y_val_2005, probs_2005, elo_prob_2005,
                           save_path=None):
-    """Two-panel comparison figure: ROC + PR curves for all models on both subsets.
+    """Two 3-panel figures comparing 3 models + ELO on full and 2005+ subsets.
 
-    probs_full and probs_2005 are dicts like {'XGBoost': arr, 'RF': arr, 'LR': arr}.
-    elo_prob is the ELO-derived probability array (normalised elo_diff to [0,1]).
+    Fig 1: Full dataset — ROC, PR, Accuracy/AUC bars.
+    Fig 2: 2005+ subset — ROC, PR, Accuracy/AUC bars.
     """
-    from sklearn.metrics import roc_curve, precision_recall_curve, auc, average_precision_score
+    subset_a = "Full Dataset"
+    subset_b = "2005+ Subset"
 
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-    fig.suptitle("Model Comparison: Full Dataset vs 2005+ Subset",
-                 fontsize=16, fontweight="bold", y=1.02)
-    fig.tight_layout(pad=4.0)
+    all_probs_a = dict(probs_full)
+    if elo_prob_full is not None:
+        all_probs_a["ELO"] = elo_prob_full
 
-    colors = {"XGBoost": "#E63946", "Random Forest": "#457B9D",
-              "Logistic Reg": "#2A9D8F", "ELO": "#E9C46A"}
-    line_styles = {"XGBoost": "-", "Random Forest": "--",
-                   "Logistic Reg": ":", "ELO": "-."}
+    all_probs_b = dict(probs_2005)
+    if elo_prob_2005 is not None:
+        all_probs_b["ELO"] = elo_prob_2005
 
-    for row, (y_val, probs, elo_arr, subset_label) in enumerate([
-        (y_val_full, probs_full, elo_prob_full, "Full Dataset"),
-        (y_val_2005, probs_2005, elo_prob_2005, "2005+ Subset"),
-    ]):
-        all_probs = dict(probs)
-        if elo_arr is not None:
-            all_probs["ELO"] = elo_arr
+    # Fig 1: Full dataset
+    fig1, axes1 = plt.subplots(1, 3, figsize=(18, 5.5))
+    fig1.suptitle(f"Model Comparison — {subset_a}", fontsize=15, fontweight="bold", y=1.04)
+    fig1.tight_layout(pad=4.0)
+    _make_model_roc_axes(axes1[0], y_val_full, all_probs_a, subset_a)
+    _make_model_pr_axes(axes1[1], y_val_full, all_probs_a, subset_a)
+    _make_model_bar_axes(axes1[2], y_val_full, probs_full, subset_a)
 
-        # ROC
-        ax_roc = axes[row, 0]
-        for name, prob in all_probs.items():
-            fpr, tpr, _ = roc_curve(y_val, prob)
-            roc_auc = auc(fpr, tpr)
-            ax_roc.plot(fpr, tpr, color=colors.get(name, "gray"),
-                        linestyle=line_styles.get(name, "-"),
-                        lw=2, label=f"{name} (AUC={roc_auc:.3f})")
-        ax_roc.plot([0, 1], [0, 1], "k--", lw=1, alpha=0.4)
-        ax_roc.set_xlim(0, 1)
-        ax_roc.set_ylim(0, 1.05)
-        ax_roc.set_xlabel("False Positive Rate")
-        ax_roc.set_ylabel("True Positive Rate")
-        ax_roc.set_title(f"ROC — {subset_label}")
-        ax_roc.legend(loc="lower right", fontsize=8)
-        ax_roc.grid(alpha=0.3)
-
-        # PR
-        ax_pr = axes[row, 1]
-        for name, prob in all_probs.items():
-            precision, recall, _ = precision_recall_curve(y_val, prob)
-            ap = average_precision_score(y_val, prob)
-            ax_pr.plot(recall, precision, color=colors.get(name, "gray"),
-                       linestyle=line_styles.get(name, "-"),
-                       lw=2, label=f"{name} (AP={ap:.3f})")
-        ax_pr.axhline(y=y_val.mean(), color="gray", linestyle="--", lw=1, alpha=0.4)
-        ax_pr.set_xlim(0, 1)
-        ax_pr.set_ylim(0, 1.05)
-        ax_pr.set_xlabel("Recall")
-        ax_pr.set_ylabel("Precision")
-        ax_pr.set_title(f"PR — {subset_label}")
-        ax_pr.legend(loc="lower left", fontsize=8)
-        ax_pr.grid(alpha=0.3)
-
-        # Accuracy/AUC bar chart
-        ax_bar = axes[row, 2]
-        labels = [k for k in probs]
-        accs = []
-        aucs = []
-        for name in labels:
-            from sklearn.metrics import accuracy_score, roc_auc_score
-            pred = (probs[name] >= 0.5).astype(int)
-            accs.append(accuracy_score(y_val, pred))
-            aucs.append(roc_auc_score(y_val, probs[name]))
-        x = np.arange(len(labels))
-        w = 0.35
-        bars1 = ax_bar.bar(x - w/2, accs, w, label="Accuracy", color="#457B9D")
-        bars2 = ax_bar.bar(x + w/2, aucs, w, label="AUC-ROC", color="#2A9D8F")
-        ax_bar.set_xticks(x)
-        ax_bar.set_xticklabels(labels, fontsize=8)
-        ax_bar.set_ylim(0.4, 0.8)
-        ax_bar.set_ylabel("Score")
-        ax_bar.set_title(f"Accuracy & AUC — {subset_label}")
-        ax_bar.legend(fontsize=8)
-        ax_bar.grid(alpha=0.3, axis="y")
-        for b in list(bars1) + list(bars2):
-            ax_bar.text(b.get_x() + b.get_width()/2, b.get_height() + 0.005,
-                        f"{b.get_height():.2f}", ha="center", va="bottom", fontsize=7)
+    # Fig 2: 2005+ subset
+    fig2, axes2 = plt.subplots(1, 3, figsize=(18, 5.5))
+    fig2.suptitle(f"Model Comparison — {subset_b}", fontsize=15, fontweight="bold", y=1.04)
+    fig2.tight_layout(pad=4.0)
+    _make_model_roc_axes(axes2[0], y_val_2005, all_probs_b, subset_b)
+    _make_model_pr_axes(axes2[1], y_val_2005, all_probs_b, subset_b)
+    _make_model_bar_axes(axes2[2], y_val_2005, probs_2005, subset_b)
 
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.show()
-    print("Model comparison plot saved.")
+        from pathlib import Path
+        p = Path(save_path)
+        stem = p.stem
+        if stem.endswith("_fig1") or stem.endswith("_fig2"):
+            base_stem = stem.rsplit("_", 1)[0]
+        else:
+            base_stem = stem
+        ext = p.suffix
+        fig1.savefig(str(p.with_name(f"{base_stem}_fig1{ext}")), dpi=150, bbox_inches="tight")
+        fig2.savefig(str(p.with_name(f"{base_stem}_fig2{ext}")), dpi=150, bbox_inches="tight")
+    fig1.show()
+    fig2.show()
+    plt.close(fig1)
+    plt.close(fig2)
+    print("  Model comparison plots saved.")
